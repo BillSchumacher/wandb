@@ -48,11 +48,12 @@ def get_paths() -> List[Path]:
         for base, subdirs, files in os.walk(root_dir):
             # Don't walk into excluded subdirectories
             subdirs[:] = list(set(subdirs) - exclude_dirs)
-            for fname in files:
-                if fname.endswith(GENERATE_SUFFIX):
-                    paths.append(pathlib.PurePath(base, fname))
-    for f in args.files:
-        paths.append(pathlib.Path(f))
+            paths.extend(
+                pathlib.PurePath(base, fname)
+                for fname in files
+                if fname.endswith(GENERATE_SUFFIX)
+            )
+    paths.extend(pathlib.Path(f) for f in args.files)
     return paths
 
 
