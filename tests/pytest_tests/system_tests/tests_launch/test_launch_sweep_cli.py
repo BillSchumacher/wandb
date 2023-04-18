@@ -91,7 +91,7 @@ def test_launch_sweep_launch_uri(user, image_uri, launch_config):
     )
 
     if res.get("success") is not True:
-        raise Exception("create queue" + str(res))
+        raise Exception(f"create queue{str(res)}")
 
     sweep_config = {
         "method": "grid",
@@ -149,7 +149,7 @@ def test_launch_sweep_launch_error(user, image_uri, launch_config, job):
     )
 
     if not res or res.get("success") is not True:
-        raise Exception("create queue" + str(res))
+        raise Exception(f"create queue{str(res)}")
 
     sweep_config = {
         "method": "grid",
@@ -205,7 +205,7 @@ def test_launch_sweep_launch_resume(user):
     )
 
     if res.get("success") is not True:
-        raise Exception("create queue" + str(res))
+        raise Exception(f"create queue{str(res)}")
 
     with pytest.raises(subprocess.CalledProcessError):
         out = subprocess.check_output(

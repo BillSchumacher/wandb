@@ -35,8 +35,7 @@ def find_list_of_key_locations_and_dicts(data, search_key: str, root=None):
                 find_list_of_key_locations_and_dicts(val, search_key, root=find_root)
             )
     elif isinstance(data, dict):
-        check = data.get(search_key)
-        if check:
+        if check := data.get(search_key):
             found.append((root, data))
         for key, val in data.items():
             find_root = root[:]
@@ -44,9 +43,7 @@ def find_list_of_key_locations_and_dicts(data, search_key: str, root=None):
             found.extend(
                 find_list_of_key_locations_and_dicts(val, search_key, root=find_root)
             )
-    elif isinstance(data, (str, int, float)) or data is None:
-        pass
-    else:
+    elif not isinstance(data, (str, int, float)) and data is not None:
         raise RuntimeError(f"unknown type: type={type(data)} data={data}")
     return found
 
@@ -64,15 +61,11 @@ def matrix_expand(loc_dict_tuple_list):
     ret = []
     loc_dict_tuple_list = list(loc_dict_tuple_list)
     for location, containing_dict in loc_dict_tuple_list:
-        matrix = containing_dict.get("matrix")
-        if matrix:
+        if matrix := containing_dict.get("matrix"):
             # assume any block referencing a matrix is using all parameters
             # could check <<>> and expand syntax
             parameters = matrix.get("parameters")
-            groups = []
-            for k, v in parameters.items():
-                groups.append([(k, i) for i in v])
-
+            groups = [[(k, i) for i in v] for k, v in parameters.items()]
             product = itertools.product(*groups)
             product = list(product)
             for subs in product:
@@ -104,8 +97,7 @@ def create_parallelism_defaults_dict(par_defaults_list):
 def parallelism_expand(cov_list, par_dict):
     ret = []
     for location, containing_dict in cov_list:
-        parallelism = containing_dict.get("parallelism")
-        if parallelism:
+        if parallelism := containing_dict.get("parallelism"):
             count = parallelism
         else:
             # see if we can find counts in defaults
@@ -169,9 +161,7 @@ def coverage_coveragerc_check(toxenv_list, args):
     paths = cf.get("paths", "canonicalsrc")
     paths = paths.split()
 
-    toxenv_list = list(set(toxenv_list))
-    toxenv_list.sort()
-
+    toxenv_list = sorted(set(toxenv_list))
     # lets generate what paths should look like
     expected_paths = [cononical]
     for toxenv in toxenv_list:

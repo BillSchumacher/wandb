@@ -89,18 +89,17 @@ RE_WINFNAMES = re.compile(r'[<>:"\\?*]')
 # A separator is defined as a period, one or two underscores, or one or more dashes.
 # A name component may not start or end with a separator."
 DOCKER_IMAGE_NAME_SEPARATOR = "(?:__|[._]|[-]+)"
-RE_DOCKER_IMAGE_NAME_SEPARATOR_START = re.compile("^" + DOCKER_IMAGE_NAME_SEPARATOR)
-RE_DOCKER_IMAGE_NAME_SEPARATOR_END = re.compile(DOCKER_IMAGE_NAME_SEPARATOR + "$")
+RE_DOCKER_IMAGE_NAME_SEPARATOR_START = re.compile(
+    f"^{DOCKER_IMAGE_NAME_SEPARATOR}"
+)
+RE_DOCKER_IMAGE_NAME_SEPARATOR_END = re.compile(
+    f"{DOCKER_IMAGE_NAME_SEPARATOR}$"
+)
 RE_DOCKER_IMAGE_NAME_SEPARATOR_REPEAT = re.compile(DOCKER_IMAGE_NAME_SEPARATOR + "{2,}")
 RE_DOCKER_IMAGE_NAME_CHARS = re.compile(r"[^a-z0-9._\-]")
 
 # these match the environments for gorilla
-if IS_GIT:
-    SENTRY_ENV = "development"
-else:
-    SENTRY_ENV = "production"
-
-
+SENTRY_ENV = "development" if IS_GIT else "production"
 PLATFORM_WINDOWS = "windows"
 PLATFORM_LINUX = "linux"
 PLATFORM_BSD = "bsd"
@@ -166,7 +165,7 @@ def vendor_setup() -> Callable:
     reset_path()
     ```
     """
-    original_path = [directory for directory in sys.path]
+    original_path = list(sys.path)
 
     def reset_import_path() -> None:
         sys.path = original_path
@@ -230,14 +229,11 @@ def get_module(
     """
     if name not in _not_importable:
         try:
-            if not lazy:
-                return import_module(name)
-            else:
-                return import_module_lazy(name)
+            return import_module_lazy(name) if lazy else import_module(name)
         except Exception:
             _not_importable.add(name)
-            msg = f"Error importing optional module {name}"
             if required:
+                msg = f"Error importing optional module {name}"
                 logger.exception(msg)
     if required and name in _not_importable:
         raise wandb.Error(required)
@@ -259,15 +255,16 @@ def app_url(api_url: str) -> str:
     app_url = wandb.env.get_app_url()
     if app_url is not None:
         return str(app_url.strip("/"))
-    if "://api.wandb.test" in api_url:
+    if (
+        "://api.wandb.test" in api_url
+        or "://api.wandb." not in api_url
+        and "://api." in api_url
+    ):
         # dev mode
         return api_url.replace("://api.", "://app.").strip("/")
     elif "://api.wandb." in api_url:
         # cloud
         return api_url.replace("://api.", "://").strip("/")
-    elif "://api." in api_url:
-        # onprem cloud
-        return api_url.replace("://api.", "://app.").strip("/")
     # wandb/local
     return api_url
 
@@ -277,7 +274,7 @@ def get_full_typename(o: Any) -> Any:
 
     Avoids needing to to import (and therefore depend on) PyTorch, TensorFlow, etc.
     """
-    instance_name = o.__class__.__module__ + "." + o.__class__.__name__
+    instance_name = f"{o.__class__.__module__}.{o.__class__.__name__}"
     if instance_name in ["builtins.module", "__builtin__.module"]:
         return o.__name__
     else:
@@ -445,10 +442,7 @@ def ensure_matplotlib_figure(obj: Any) -> Any:
         if len(position) != 2:
             raise ValueError("position should be 2-tuple")
         position_type, amount = position  # type: ignore
-        if position_type == "outward" and amount == 0:
-            return True
-        else:
-            return False
+        return position_type == "outward" and amount == 0
 
     Spine.is_frame_like = is_frame_like
 
@@ -559,17 +553,11 @@ def json_friendly(  # noqa: C901
         except RuntimeError:
             obj = obj.numpy()
     elif is_pytorch_tensor_typename(typename) or is_fastai_tensor_typename(typename):
-        try:
+        with contextlib.suppress(AttributeError):
             if obj.requires_grad:
                 obj = obj.detach()
-        except AttributeError:
-            pass  # before 0.4 is only present on variables
-
-        try:
+        with contextlib.suppress(RuntimeError):
             obj = obj.data
-        except RuntimeError:
-            pass  # happens for Tensors before 0.4
-
         if obj.size():
             obj = obj.cpu().detach().numpy()
         else:
@@ -602,9 +590,7 @@ def json_friendly(  # noqa: C901
         converted = False
     if getsizeof(obj) > VALUE_BYTES_LIMIT:
         wandb.termwarn(
-            "Serializing object of type {} that is {} bytes".format(
-                type(obj).__name__, getsizeof(obj)
-            )
+            f"Serializing object of type {type(obj).__name__} that is {getsizeof(obj)} bytes"
         )
     return obj, converted
 
@@ -613,25 +599,17 @@ def json_friendly_val(val: Any) -> Any:
     """Make any value (including dict, slice, sequence, etc) JSON friendly."""
     converted: Union[dict, list]
     if isinstance(val, dict):
-        converted = {}
-        for key, value in val.items():
-            converted[key] = json_friendly_val(value)
-        return converted
+        return {key: json_friendly_val(value) for key, value in val.items()}
     if isinstance(val, slice):
-        converted = dict(
+        return dict(
             slice_start=val.start, slice_step=val.step, slice_stop=val.stop
         )
-        return converted
     val, _ = json_friendly(val)
     if isinstance(val, Sequence) and not isinstance(val, str):
-        converted = []
-        for value in val:
-            converted.append(json_friendly_val(value))
-        return converted
-    else:
-        if val.__class__.__module__ not in ("builtins", "__builtin__"):
-            val = str(val)
-        return val
+        return [json_friendly_val(value) for value in val]
+    if val.__class__.__module__ not in ("builtins", "__builtin__"):
+        val = str(val)
+    return val
 
 
 def alias_is_version_index(alias: str) -> bool:
@@ -714,12 +692,11 @@ def generate_id(length: int = 8) -> str:
 
 def parse_tfjob_config() -> Any:
     """Attempt to parse TFJob config, returning False if it can't find it."""
-    if os.getenv("TF_CONFIG"):
-        try:
-            return json.loads(os.environ["TF_CONFIG"])
-        except ValueError:
-            return False
-    else:
+    if not os.getenv("TF_CONFIG"):
+        return False
+    try:
+        return json.loads(os.environ["TF_CONFIG"])
+    except ValueError:
         return False
 
 
@@ -732,9 +709,7 @@ class WandBJSONEncoder(json.JSONEncoder):
         # if hasattr(obj, 'to_json'):
         #     return obj.to_json()
         tmp_obj, converted = json_friendly(obj)
-        if converted:
-            return tmp_obj
-        return json.JSONEncoder.default(self, obj)
+        return tmp_obj if converted else json.JSONEncoder.default(self, obj)
 
 
 class WandBJSONEncoderOld(json.JSONEncoder):
@@ -743,9 +718,7 @@ class WandBJSONEncoderOld(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
         tmp_obj, converted = json_friendly(obj)
         tmp_obj, compressed = maybe_compress_summary(tmp_obj, get_h5_typename(obj))
-        if converted:
-            return tmp_obj
-        return json.JSONEncoder.default(self, tmp_obj)
+        return tmp_obj if converted else json.JSONEncoder.default(self, tmp_obj)
 
 
 class WandBHistoryJSONEncoder(json.JSONEncoder):
@@ -757,9 +730,7 @@ class WandBHistoryJSONEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
         obj, converted = json_friendly(obj)
         obj, compressed = maybe_compress_history(obj)
-        if converted:
-            return obj
-        return json.JSONEncoder.default(self, obj)
+        return obj if converted else json.JSONEncoder.default(self, obj)
 
 
 class JSONEncoderUncompressed(json.JSONEncoder):
@@ -801,9 +772,7 @@ def make_json_if_not_number(
     v: Union[int, float, str, Mapping, Sequence]
 ) -> Union[int, float, str]:
     """If v is not a basic type convert it to json."""
-    if isinstance(v, (float, int)):
-        return v
-    return json_dumps_safer(v)
+    return v if isinstance(v, (float, int)) else json_dumps_safer(v)
 
 
 def make_safe_for_json(obj: Any) -> Any:
@@ -879,9 +848,12 @@ def check_retry_conflict(e: Any) -> Optional[bool]:
     """
     if hasattr(e, "exception"):
         e = e.exception
-    if isinstance(e, requests.HTTPError) and e.response is not None:
-        if e.response.status_code == 409:
-            return True
+    if (
+        isinstance(e, requests.HTTPError)
+        and e.response is not None
+        and e.response.status_code == 409
+    ):
+        return True
     return None
 
 
@@ -922,9 +894,7 @@ def make_check_retry_fn(
             return fallback_retry_fn(e)
         if check is False:
             return False
-        if check_timedelta:
-            return check_timedelta
-        return True
+        return check_timedelta if check_timedelta else True
 
     return check_retry_fn
 
@@ -959,16 +929,13 @@ def downsample(values: Sequence, target_length: int) -> list:
 
     Values can be any sequence, including a generator.
     """
-    if not target_length > 1:
+    if target_length <= 1:
         raise UsageError("target_length must be > 1")
     values = list(values)
     if len(values) < target_length:
         return values
     ratio = float(len(values) - 1) / (target_length - 1)
-    result = []
-    for i in range(target_length):
-        result.append(values[int(i * ratio)])
-    return result
+    return [values[int(i * ratio)] for i in range(target_length)]
 
 
 def has_num(dictionary: Mapping, key: Any) -> bool:
@@ -1024,7 +991,7 @@ def image_from_docker_args(args: List[str]) -> Optional[str]:
     last_flag = -2
     last_arg = ""
     possible_images = []
-    if len(args) > 0 and args[0] == "run":
+    if args and args[0] == "run":
         args.pop(0)
     for i, arg in enumerate(args):
         if arg.startswith("-"):
@@ -1040,12 +1007,15 @@ def image_from_docker_args(args: List[str]) -> Optional[str]:
                 possible_images.append(arg)
             elif last_arg in bool_args and last_flag == i - 1:
                 possible_images.append(arg)
-    most_likely = None
-    for img in possible_images:
-        if ":" in img or "@" in img or "/" in img:
-            most_likely = img
-            break
-    if most_likely is None and len(possible_images) > 0:
+    most_likely = next(
+        (
+            img
+            for img in possible_images
+            if ":" in img or "@" in img or "/" in img
+        ),
+        None,
+    )
+    if most_likely is None and possible_images:
         most_likely = possible_images[0]
     return most_likely
 
@@ -1066,12 +1036,7 @@ def image_id_from_k8s() -> Optional[str]:
     """
     token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
     if os.path.exists(token_path):
-        k8s_server = "https://{}:{}/api/v1/namespaces/{}/pods/{}".format(
-            os.getenv("KUBERNETES_SERVICE_HOST"),
-            os.getenv("KUBERNETES_PORT_443_TCP_PORT"),
-            os.getenv("KUBERNETES_NAMESPACE", "default"),
-            os.getenv("HOSTNAME"),
-        )
+        k8s_server = f'https://{os.getenv("KUBERNETES_SERVICE_HOST")}:{os.getenv("KUBERNETES_PORT_443_TCP_PORT")}/api/v1/namespaces/{os.getenv("KUBERNETES_NAMESPACE", "default")}/pods/{os.getenv("HOSTNAME")}'
         try:
             res = requests.get(
                 k8s_server,
@@ -1179,11 +1144,7 @@ def _prompt_choice(
             prompt = "wandb"
 
     text = f"{prompt}: Enter your choice: "
-    if input_fn == input:
-        choice = input_fn(text)
-    else:
-        choice = input_fn(text, jupyter=jupyter)
-    return choice  # type: ignore
+    return input_fn(text) if input_fn == input else input_fn(text, jupyter=jupyter)
 
 
 def prompt_choices(
@@ -1201,10 +1162,8 @@ def prompt_choices(
         if not choice:
             continue
         idx = -1
-        try:
+        with contextlib.suppress(ValueError):
             idx = int(choice) - 1
-        except ValueError:
-            pass
         if idx < 0 or idx > len(choices) - 1:
             wandb.termwarn("Invalid choice")
     result = choices[idx]
@@ -1220,19 +1179,14 @@ def guess_data_type(shape: Sequence[int], risky: bool = False) -> Optional[str]:
         risky(bool): some guesses are more likely to be wrong.
     """
     # (samples,) or (samples,logits)
-    if len(shape) in (1, 2):
+    if len(shape) in {1, 2}:
         return "label"
     # Assume image mask like fashion mnist: (no color channel)
     # This is risky because RNNs often have 3 dim tensors: batch, time, channels
     if risky and len(shape) == 3:
         return "image"
     if len(shape) == 4:
-        if shape[-1] in (1, 3, 4):
-            # (samples, height, width, Y \ RGB \ RGBA)
-            return "image"
-        else:
-            # (samples, height, width, logits)
-            return "segmentation_mask"
+        return "image" if shape[-1] in (1, 3, 4) else "segmentation_mask"
     return None
 
 
@@ -1268,15 +1222,12 @@ def from_human_size(size: str, units: Optional[List[Tuple[str, Any]]] = None) ->
     units = units or POW_10_BYTES
     units_dict = {unit.upper(): value for (unit, value) in units}
     regex = re.compile(
-        r"(\d+\.?\d*)\s*({})?".format("|".join(units_dict.keys())), re.IGNORECASE
+        f'(\d+\.?\d*)\s*({"|".join(units_dict.keys())})?', re.IGNORECASE
     )
     match = re.match(regex, size)
     if not match:
         raise ValueError("size must be of the form `10`, `10B` or `10 B`.")
-    factor, unit = (
-        float(match.group(1)),
-        units_dict[match.group(2).upper()] if match.group(2) else 1,
-    )
+    factor, unit = float(match[1]), units_dict[match[2].upper()] if match[2] else 1
     return int(factor * unit)
 
 
@@ -1299,7 +1250,7 @@ def auto_project_name(program: Optional[str]) -> str:
     project = repo_name
     sub_path = os.path.relpath(prog_dir, root_dir)
     if sub_path != ".":
-        project += "-" + sub_path
+        project += f"-{sub_path}"
     return str(project.replace(os.sep, "_"))
 
 
@@ -1325,8 +1276,8 @@ def check_and_warn_old(files: List[str]) -> bool:
 
 class ImportMetaHook:
     def __init__(self) -> None:
-        self.modules: Dict[str, ModuleType] = dict()
-        self.on_import: Dict[str, list] = dict()
+        self.modules: Dict[str, ModuleType] = {}
+        self.on_import: Dict[str, list] = {}
 
     def add(self, fullname: str, on_import: Callable) -> None:
         self.on_import.setdefault(fullname, []).append(on_import)
@@ -1340,17 +1291,14 @@ class ImportMetaHook:
     def find_module(
         self, fullname: str, path: Optional[str] = None
     ) -> Optional["ImportMetaHook"]:
-        if fullname in self.on_import:
-            return self
-        return None
+        return self if fullname in self.on_import else None
 
     def load_module(self, fullname: str) -> ModuleType:
         self.uninstall()
         mod = importlib.import_module(fullname)
         self.install()
         self.modules[fullname] = mod
-        on_imports = self.on_import.get(fullname)
-        if on_imports:
+        if on_imports := self.on_import.get(fullname):
             for f in on_imports:
                 f()
         return mod
@@ -1452,7 +1400,7 @@ def _is_databricks() -> bool:
             if hasattr(shell, "sc"):
                 sc = shell.sc
                 if hasattr(sc, "appName"):
-                    return bool(sc.appName == "Databricks Shell")
+                    return sc.appName == "Databricks Shell"
     return False
 
 
@@ -1501,12 +1449,12 @@ def artifact_to_json(
 def check_dict_contains_nested_artifact(d: dict, nested: bool = False) -> bool:
     for item in d.values():
         if isinstance(item, dict):
-            contains_artifacts = check_dict_contains_nested_artifact(item, True)
-            if contains_artifacts:
+            if contains_artifacts := check_dict_contains_nested_artifact(
+                item, True
+            ):
                 return True
         elif (
-            isinstance(item, wandb.Artifact)
-            or isinstance(item, wandb.apis.public.Artifact)
+            isinstance(item, (wandb.Artifact, wandb.apis.public.Artifact))
             or _is_artifact_string(item)
         ) and nested:
             return True
@@ -1588,7 +1536,7 @@ def _resolve_aliases(aliases: Optional[Union[str, Iterable[str]]]) -> List[str]:
 
 
 def _is_artifact_object(v: Any) -> bool:
-    return isinstance(v, wandb.Artifact) or isinstance(v, wandb.apis.public.Artifact)
+    return isinstance(v, (wandb.Artifact, wandb.apis.public.Artifact))
 
 
 def _is_artifact_string(v: Any) -> bool:
@@ -1683,12 +1631,8 @@ def merge_dicts(source: Dict[str, Any], destination: Dict[str, Any]) -> Dict[str
             # get node or create one
             node = destination.setdefault(key, {})
             merge_dicts(value, node)
+        elif isinstance(value, list) and key in destination:
+            destination[key].extend(value)
         else:
-            if isinstance(value, list):
-                if key in destination:
-                    destination[key].extend(value)
-                else:
-                    destination[key] = value
-            else:
-                destination[key] = value
+            destination[key] = value
     return destination

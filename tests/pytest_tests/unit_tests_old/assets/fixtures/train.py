@@ -14,16 +14,16 @@ parser.add_argument("--sleep_every", type=int, default=0)
 args = parser.parse_args()
 print("Calling init with args: {}", format(args))
 print(
-    "Environ: {}".format({k: v for k, v in os.environ.items() if k.startswith("WANDB")})
+    f'Environ: {{k: v for k, v in os.environ.items() if k.startswith("WANDB")}}'
 )
 wandb.init(config=args, project="test")
 print(f"Init called with config {wandb.config}")
 
 # raise ValueError()
 # os.kill(os.getpid(), signal.SIGINT)
-for i in range(0, wandb.config.epochs):
+for i in range(wandb.config.epochs):
     loss = random.uniform(0, wandb.config.epochs - i)
-    print("loss: %s" % loss)
+    print(f"loss: {loss}")
     wandb.log({"loss": loss}, commit=False)
     if wandb.config.heavy:
         for x in range(50):
